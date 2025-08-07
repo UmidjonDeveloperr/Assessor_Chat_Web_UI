@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Real-Time Chat Viewer</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #f9f9f9;
+      margin: 0;
+      padding: 1rem;
+    }
+    #counter {
+      margin-bottom: 1rem;
+      font-weight: bold;
+      color: #333;
+    }
+    #messages {
+      max-height: 80vh;
+      overflow-y: auto;
+      background: #fff;
+      border: 1px solid #ddd;
+      padding: 1rem;
+      border-radius: 8px;
+    }
+    .message {
+      margin-bottom: 1rem;
+      padding: 0.5rem;
+      border-bottom: 1px solid #eee;
+    }
+    .timestamp {
+      color: gray;
+      font-size: 0.8em;
+    }
+  </style>
+</head>
+<body>
+  <h2>Real-Time Chat Viewer</h2>
+  <div id="counter">Messages: 0</div>
+  <div id="messages"></div>
+
+  <script>
+    const conversationId = 123; // replace with actual conversation ID
+    const userId = 456;         // replace with actual user ID
+    const socket = new WebSocket(`ws://localhost:8081/ws/4/${userId}`);
+
+    const messagesDiv = document.getElementById('messages');
+    const counterDiv = document.getElementById('counter');
+    let messageCount = 0;
+
+    socket.onopen = () => {
+      console.log("WebSocket connected");
+    };
+
+    socket.onmessage = (event) => {
+      console.log("Message received:", event.data);
+      try {
+        const data = JSON.parse(event.data);
+        const msg = data.message;
+
+        const el = document.createElement("div");
+        el.className = "message";
+
+        if (data.type === "message") {
+          el.innerHTML = `
+            <div><strong>User ${msg.sender_id}</strong>: ${msg.content}</div>
+            <div class="timestamp">${new Date(msg.timestamp).toLocaleString()}</div>
+          `;
+        } else if (data.type === "file") {
+          el.innerHTML = `
+            <div><strong>User ${msg.sender_id}</strong> sent a file: <em>${msg.file_name}</em> (${msg.file_type})</div>
+            <div class="timestamp">${new Date(msg.timestamp).toLocaleString()}</div>
+          `;
+        } else {
+          el.innerText = "Unknown message type.";
+        }
+
+        messagesDiv.appendChild(el);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+        messageCount += 1;
+        counterDiv.textContent = `Messages: ${messageCount}`;
+      } catch (err) {
+        console.error("Failed to parse message:", err);
+      }
+    };
+
+    socket.onerror = (err) => {
+      console.error("WebSocket error:", err);
+    };
+
+    socket.onclose = () => {
+      console.warn("WebSocket closed");
+    };
+  </script>
+</body>
+</html>
