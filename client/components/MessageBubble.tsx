@@ -7,7 +7,9 @@ import {
   Music, 
   File as FileIcon,
   Video,
-  Archive
+  Archive,
+  Check,
+  CheckCheck
 } from 'lucide-react';
 import { Message, Friend, Group } from '@shared/api';
 import { format, parseISO } from 'date-fns';
@@ -146,18 +148,6 @@ export const MessageBubble = ({ message, isOwn, chatType, chatData }: MessageBub
                     {message.description}
                   </p>
                 )}
-                
-                {/* Image preview for image files */}
-                {/* {message.file_type?.startsWith('image/') && (
-                  <div className="mt-2">
-                    <img
-                      src={`http://127.0.0.1:8096/attachments/${message.attachment_id}/download`}
-                      alt={message.file_name || 'Image'}
-                      className="max-w-full h-auto rounded-lg cursor-pointer"
-                      onClick={downloadFile}
-                    />
-                  </div>
-                )} */}
               </div>
             )}
           </div>
@@ -168,6 +158,17 @@ export const MessageBubble = ({ message, isOwn, chatType, chatData }: MessageBub
             <span className="text-xs text-gray-500">
               {formatTime(message.created_at)}
             </span>
+            {isOwn && (
+              message.is_read ? (
+                <span className="ml-1 text-blue-500" title="Read">
+                  <CheckCheck className="h-3 w-3" />
+                </span>
+              ) : (
+                <span className="ml-1 text-gray-400" title="Sent">
+                  <Check className="h-3 w-3" />
+                </span>
+              )
+            )}
           </div>
         </div>
       </div>

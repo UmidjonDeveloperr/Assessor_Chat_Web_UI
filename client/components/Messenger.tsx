@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -11,8 +11,6 @@ import {
   Settings,
   Search,
   Plus,
-  Menu,
-  X
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Friend, Group } from '@shared/api';
@@ -29,31 +27,71 @@ export const Messenger = () => {
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Track unread counts keyed by conversation_id
+  const [unreadCounts, setUnreadCounts] = useState<Record<number, number>>({});
+  const unreadInFlight = useRef(false);
 
   useEffect(() => {
     fetchFriendsAndGroups();
 
-    // Check for mobile
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
     checkMobile();
     window.addEventListener('resize', checkMobile);
-
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
+  // Refetch when user changes so we can include user_id
+  useEffect(() => {
+    fetchFriendsAndGroups();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.user_id]);
+
+  // Poll unread counts every 200ms
+  useEffect(() => {
+    if (!user?.user_id) return;
+
+    let timer: any;
+    const poll = async () => {
+      if (unreadInFlight.current) return;
+      unreadInFlight.current = true;
+      try {
+        const res = await fetch(
+          `http://127.0.0.1:8096/unreaded-user-messages?user_id=${user.user_id}`,
+          {
+            method: 'POST',
+            headers: { accept: 'application/json' },
+            body: ''
+          }
+        );
+        if (res.ok) {
+          const data: Array<{ conversation_id: number; unreaded_messages: number }> = await res.json();
+          const map: Record<number, number> = {};
+          for (const item of data) {
+            map[item.conversation_id] = item.unreaded_messages;
+          }
+          setUnreadCounts(map);
+        }
+      } catch (e) {
+        // silent
+      } finally {
+        unreadInFlight.current = false;
+      }
+    };
+
+    poll();
+    timer = setInterval(poll, 200);
+    return () => clearInterval(timer);
+  }, [user?.user_id]);
+
   const fetchFriendsAndGroups = async () => {
     try {
+      const friendsUrl = user?.user_id
+        ? `http://127.0.0.1:8096/friends?user_id=${user.user_id}`
+        : 'http://127.0.0.1:8096/friends';
+
       const [friendsRes, groupsRes] = await Promise.all([
-        fetch('http://127.0.0.1:8096/friends', {
-          headers: { 'accept': 'application/json' }
-        }),
-        fetch('http://127.0.0.1:8096/groups', {
-          headers: { 'accept': 'application/json' }
-        })
+        fetch(friendsUrl, { headers: { accept: 'application/json' } }),
+        fetch('http://127.0.0.1:8096/groups', { headers: { accept: 'application/json' } })
       ]);
 
       if (friendsRes.ok) {
@@ -79,34 +117,32 @@ export const Messenger = () => {
       console.log('Current user ID:', user?.user_id);
       console.log('Friend ID:', friend.id);
 
-      // Check if friend has id
       if (!friend.id) {
-        console.error('Friend does not have id. The /friends endpoint needs to include id field.');
-        alert('Unable to start conversation: Friend ID is missing. Please check that the backend /friends endpoint includes id.');
+        console.error('Friend does not have id.');
+        alert('Unable to start conversation: Friend ID is missing.');
         return;
       }
-
       if (!user?.user_id) {
         console.error('Current user ID is missing');
         return;
       }
 
-      // Get conversation ID for friend
+      // If backend already provided a conversation_id, use it directly
+      const convId = (friend as any).conversation_id as number | undefined;
+      if (convId) {
+        setSelectedChat({ type: 'friend', data: friend, conversationId: convId });
+        return;
+      }
+
       const conversationUrl = `http://127.0.0.1:8096/conversation/${user.user_id}/${friend.id}`;
       console.log('Fetching conversation from:', conversationUrl);
 
-      const response = await fetch(conversationUrl, {
-        headers: { 'accept': 'application/json' }
-      });
+      const response = await fetch(conversationUrl, { headers: { accept: 'application/json' } });
 
       if (response.ok) {
         const conversation = await response.json();
         console.log('Conversation response:', conversation);
-        setSelectedChat({
-          type: 'friend',
-          data: friend,
-          conversationId: conversation.id
-        });
+        setSelectedChat({ type: 'friend', data: friend, conversationId: conversation.id });
       } else {
         const errorText = await response.text();
         console.error('Failed to get conversation:', response.status, errorText);
@@ -119,16 +155,10 @@ export const Messenger = () => {
   };
 
   const handleGroupClick = (group: Group) => {
-    setSelectedChat({
-      type: 'group',
-      data: group,
-      conversationId: group.id
-    });
+    setSelectedChat({ type: 'group', data: group, conversationId: group.id });
   };
 
-  const getUserInitials = (firstname: string, lastname: string) => {
-    return `${firstname.charAt(0)}${lastname.charAt(0)}`.toUpperCase();
-  };
+  const getUserInitials = (firstname: string, lastname: string) => `${firstname.charAt(0)}${lastname.charAt(0)}`.toUpperCase();
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -191,14 +221,12 @@ export const Messenger = () => {
                   <Plus className="h-3 w-3" />
                 </Button>
               </div>
-              
               {groups.map((group) => (
                 <button
                   key={group.id}
                   onClick={() => handleGroupClick(group)}
                   className={`w-full flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50 transition-colors ${
-                    selectedChat?.type === 'group' && 
-                    (selectedChat.data as Group).id === group.id
+                    selectedChat?.type === 'group' && (selectedChat.data as Group).id === group.id
                       ? 'bg-blue-50 border border-blue-200'
                       : ''
                   }`}
@@ -210,6 +238,11 @@ export const Messenger = () => {
                     <p className="font-medium text-gray-900">{group.name}</p>
                     <p className="text-sm text-gray-500 truncate">Group chat</p>
                   </div>
+                  {(unreadCounts[group.id] ?? 0) > 0 && (
+                    <span className="ml-auto inline-flex min-w-[20px] h-5 px-2 items-center justify-center rounded-full text-xs font-semibold bg-blue-600 text-white">
+                      {unreadCounts[group.id]}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -223,18 +256,16 @@ export const Messenger = () => {
                   <MessageCircle className="h-4 w-4 text-gray-500" />
                   <span className="text-sm font-medium text-gray-700">Friends</span>
                   <Badge variant="secondary" className="text-xs">
-                    {friends.filter(f => f.active).length}
+                    {friends.filter((f) => f.active).length}
                   </Badge>
                 </div>
               </div>
-              
-              {friends.map((friend, index) => (
+              {friends.map((friend) => (
                 <button
-                  key={index}
+                  key={friend.id}
                   onClick={() => handleFriendClick(friend)}
                   className={`w-full flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50 transition-colors ${
-                    selectedChat?.type === 'friend' && 
-                    (selectedChat.data as Friend).login === friend.login
+                    selectedChat?.type === 'friend' && (selectedChat.data as Friend).login === friend.login
                       ? 'bg-blue-50 border border-blue-200'
                       : ''
                   }`}
@@ -253,10 +284,13 @@ export const Messenger = () => {
                     <p className="font-medium text-gray-900 truncate">
                       {friend.firstname} {friend.lastname}
                     </p>
-                    <p className="text-sm text-gray-500">
-                      {friend.active ? 'Online' : 'Offline'}
-                    </p>
+                    <p className="text-sm text-gray-500">{friend.active ? 'Online' : 'Offline'}</p>
                   </div>
+                  {(friend as any).conversation_id && (unreadCounts[(friend as any).conversation_id] ?? 0) > 0 && (
+                    <span className="ml-auto inline-flex min-w-[20px] h-5 px-2 items-center justify-center rounded-full text-xs font-semibold bg-blue-600 text-white">
+                      {unreadCounts[(friend as any).conversation_id]}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -267,22 +301,15 @@ export const Messenger = () => {
       {/* Chat Area */}
       <div className="flex-1 flex flex-col sm:hidden md:flex">
         {selectedChat ? (
-          <ChatArea
-            chat={selectedChat}
-            currentUserId={user?.user_id || 0}
-          />
+          <ChatArea chat={selectedChat} currentUserId={user?.user_id || 0} />
         ) : (
           <div className="flex-1 flex items-center justify-center bg-gray-50">
             <div className="text-center">
               <div className="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
                 <MessageCircle className="w-8 h-8 text-gray-400" />
               </div>
-              <h3 className="text-lg font-medium text-gray-900 mb-2">
-                Select a conversation
-              </h3>
-              <p className="text-gray-500">
-                Choose a friend or group to start messaging
-              </p>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">Select a conversation</h3>
+              <p className="text-gray-500">Choose a friend or group to start messaging</p>
             </div>
           </div>
         )}

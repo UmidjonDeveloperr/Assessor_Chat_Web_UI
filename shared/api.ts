@@ -60,6 +60,7 @@ export interface Message {
   file_size: number | null;
   created_at: string;
   type: 'message' | 'file';
+  is_read?: boolean; // Optional for backward compatibility
 }
 
 export interface FileUploadResponse {
